@@ -1,0 +1,170 @@
+How to install and Configure DNS Server In Linux (David McKone)
+
+Installation and configuration example:
+1) Install Ubuntu and apply the latest patches
+
+2) Install and configure Bind9
+ sudo apt install -y bind9 bind9utils bind9-doc dnsutils
+ 
+3) Configure DNS Forwarding
+ cd /etc/bind
+ backup the existing file, named.conf.options e.g.
+ sudo cp named.conf.options named.conf.options.bak
+ edit named.conf.options e.g.
+ sudo nano named.conf.options
+ so it looks something like this
+ 
+acl trustedclients {
+        localhost;
+        localnets;
+        172.16.18.0/24;
+        172.16.19.0/24;
+};
+
+options {
+        directory "/var/cache/bind";
+
+        recursion yes;
+        allow-query { trustedclients; };
+        allow-query-cache { trustedclients; };
+        allow-recursion { trustedclients; };
+
+        forwarders {
+                1.1.1.2;
+                1.0.0.2;
+        };
+
+        dnssec-validation no;
+
+        listen-on-v6 port 53 { ::1; };
+        listen-on port 53 { 127.0.0.1; 172.16.17.10; };
+};
+
+NOTE: DNSSec disabled as it was found to cause issues for Ubuntu 20.04
+
+4) Define zone files
+ backup the existing file named.conf.local e.g.
+ sudo cp named.conf.local named.conf.local.bak
+ edit named.conf.local e.g.
+ sudo nano named.conf.local
+ so it looks something like this
+  
+zone "templab.lan" {
+        type master;
+        file "/etc/bind/db.templab.lan";
+};
+
+zone "17.16.172.in-addr.arpa" {
+        type master;
+        file "/etc/bind/db.172.16.17";
+};
+
+ check the file for errors
+ sudo named-checkconf
+ 
+5) Create a forward lookup zone
+ copy an existing file to one with the name used before e.g.
+ sudo cp db.local db.templab.lan
+ edit the file e.g.
+ sudo nano db.templab.lan
+ so that it looks something like this
+ 
+;
+; BIND data file for templab.lan zone
+;
+$TTL    604800
+@       IN      SOA     ns1.templab.lan. admin.templab.lan. (
+                              3         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      ns1.templab.lan.
+
+ns1     IN      A       172.16.17.10
+dhcp1   IN      A       172.16.17.12
+fw      IN      A       172.16.18.254
+
+ check the file syntax
+ sudo named-checkzone templab.lan db.templab.lan
+ 
+6) Create a reverse lookup zone
+  copy an existing file to one with the name used before e.g.
+  sudo cp db.127 db.172.16.17
+  edit the file e.g.
+  sudo nano db.172.16.17
+  so that it looks something like this
+  
+;
+; BIND reverse data file for templab.lan zone
+;
+$TTL    604800
+@       IN      SOA     ns1.templab.lan. admin.templab.lan. (
+                              2         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      ns1.templab.lan.
+
+10      IN      PTR     ns1.templab.lan.
+12      IN      PTR     dhcp1.templab.lan.
+
+ check the file syntax
+ sudo named-checkzone 17.16.172.in-addr.arpa db.172.16.17
+
+7) Edit the server's DNS entry to use it's own DNS server
+  cd /etc/netplan
+  edit the yaml configuration file, e.g.
+  sudo nano 00-installer-config.yaml
+  change the IP address of the dns server entry and save the file
+  apply the change
+  sudo netplan apply
+
+8) Start and test DNS
+ start bind9
+ sudo systemctl start bind9
+ check its status
+ sudo systemctl status bind9
+ 
+ test DNS is working e.g.
+ host dhcp1.templab.lan
+ host 172.16.17.10
+ ping www.amazon.com
+
+ Credits:
+LoveLife | Instrumental Prod. Blue Mango | EQMUSEQ.COM by Don Da Vinci
+https://soundcloud.com/eqmuseq/loveli...
+
+##$#### 
+enp4s0
+192.168.1.171/24
+#Let NetworkManager manage all devices on this system
+network:
+  ethernets:
+    enp4s0:
+      addresses:
+      - 172.16.17.10/24
+      gateway4: 172.16.17.254
+      nameservers:
+        addresses:
+        - 127.0.0.2
+        search:
+        - templab.lan
+  version: 2
+
+  ######################################
+  network:
+    version: 2
+    ethernets:
+        ens18:
+            addresses:
+            - 172.16.17.10/24
+            - gateway4: 172.16.17.254
+            nameservers:
+              addresses:
+              - 127.0.0.2
+              search:
+              - templab.lan
